@@ -313,14 +313,91 @@ def add_common_image_params(payload, args):
     return payload
 
 
+def extract_text_response(data):
+    # Chat Completions compatible
+    try:
+        choices = data.get("choices") or []
+        if choices:
+            msg = choices[0].get("message") or {}
+            content = msg.get("content")
+            if isinstance(content, str):
+                return content.strip()
+            if isinstance(content, list):
+                parts = []
+                for item in content:
+                    if isinstance(item, dict):
+                        txt = item.get("text") or item.get("content")
+                        if txt:
+                            parts.append(str(txt))
+                if parts:
+                    return "\n".join(parts).strip()
+    except Exception:
+        pass
+    # Responses compatible
+    txt = data.get("output_text")
+    if isinstance(txt, str) and txt.strip():
+        return txt.strip()
+    try:
+        parts = []
+        for out in data.get("output") or []:
+            for c in out.get("content") or []:
+                if isinstance(c, dict):
+                    t = c.get("text") or c.get("content")
+                    if t:
+                        parts.append(str(t))
+        if parts:
+            return "\n".join(parts).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def enhance_prompt(api_key, base_url, prompt, model, timeout=90):
+    url = endpoint_url(base_url, "/chat/completions")
+    system = (
+        "你是专业图像提示词改写器。将用户原始需求改写成适合 gpt-image-2 的高质量中文图像生成 prompt。"
+        "要求：只输出改写后的 prompt；保留用户指定人物/角色/风格；补充主体、场景、光影、构图、质感、细节；"
+        "避免解释、列表、Markdown；不要加入色情或露骨内容。"
+    )
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.4,
+        "max_tokens": 700,
+    }
+    status, raw = request_json(url, api_key, payload, timeout=timeout, retries=1)
+    if status < 200 or status >= 300:
+        raise RuntimeError("enhance HTTP %s: %s" % (status, raw[:500]))
+    data = json.loads(raw)
+    text = extract_text_response(data).strip().strip('"')
+    if not text:
+        raise RuntimeError("enhance returned empty text")
+    return text
+
+
 def cmd_gen(args):
     api_key = args.api_key or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         die("OPENAI_API_KEY is not set. Set it in Minis Environment Variables or pass --api-key.")
     base_url = args.base_url or os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1"
     model = args.model or os.environ.get("OPENAI_IMAGE_MODEL") or "gpt-image-2"
+    prompt = args.prompt
+    enhanced_prompt = ""
+    enhance_model = args.enhance_model or os.environ.get("OPENAI_PROMPT_MODEL") or "gpt-5.4"
+    if args.enhance:
+        try:
+            enhanced_prompt = enhance_prompt(api_key, base_url, args.prompt, enhance_model, timeout=args.enhance_timeout)
+            prompt = enhanced_prompt
+            print("[image2] prompt enhanced by %s" % enhance_model, file=sys.stderr)
+        except Exception as e:
+            if args.enhance_required:
+                die("Prompt enhancement failed: " + str(e))
+            print("[image2] prompt enhancement skipped: %s" % e, file=sys.stderr)
     url = endpoint_url(base_url, "/images/generations")
-    payload = add_common_image_params({"model": model, "prompt": args.prompt}, args)
+    payload = add_common_image_params({"model": model, "prompt": prompt}, args)
     status, raw = request_json(url, api_key, payload, timeout=args.timeout, retries=args.retries)
     if status < 200 or status >= 300:
         die("HTTP %s from %s: %s" % (status, url, raw[:1200]))
@@ -332,6 +409,7 @@ def cmd_gen(args):
         "path": args.output,
         "size": size,
         "revised_prompt": (data.get("data") or [{}])[0].get("revised_prompt", ""),
+        "enhanced_prompt": enhanced_prompt,
     }, ensure_ascii=False, indent=2))
 
 
@@ -371,6 +449,12 @@ def add_shared(ap):
     ap.add_argument("--n", type=int, default=1)
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--retries", type=int, default=2, help="retry transient gateway errors for JSON image generation")
+    ap.add_argument("--enhance", action="store_true", help="rewrite prompt with a text model before image generation")
+    ap.add_argument("--no-enhance", dest="enhance", action="store_false", help="disable prompt rewrite")
+    ap.add_argument("--enhance-required", action="store_true", help="fail if prompt rewrite fails")
+    ap.add_argument("--enhance-model", default=None, help="default: env OPENAI_PROMPT_MODEL or gpt-5.4")
+    ap.add_argument("--enhance-timeout", type=int, default=90)
+    ap.set_defaults(enhance=False)
 
 
 def main():

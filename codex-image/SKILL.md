@@ -19,7 +19,7 @@ description: 使用 gpt-image-2 进行图片生成与图片编辑的本地技能
 ## 用法
 
 ```bash
-image2 画 "提示词" [输出.png]
+image2 画 "提示词" [输出.png]      # 默认先用 gpt-5.4 增强 prompt，再交给 gpt-image-2
 image2 改 输入图.png "修改要求" [输出.png]
 ```
 
@@ -34,6 +34,7 @@ image2 改 input.png "去掉右下角 logo，其他不变" edited.png
 
 - 相对文件名默认在 `/var/minis/attachments/` 下读写。
 - `image2 "提示词"` 等同于 `image2 画 "提示词"`。
+- `image2 画` 默认先用 `OPENAI_PROMPT_MODEL`（未设置时为 `gpt-5.4`）增强提示词，再用 `OPENAI_IMAGE_MODEL`（未设置时为 `gpt-image-2`）出图。
 - `image2` 会自动读取 `/etc/profile` 里的环境变量。
 - 生成图片时已内置多次重试，并优先用 `curl` 稳定读取大体积响应，兼容部分网关的 `502` / `IncompleteRead`。
 
@@ -42,13 +43,14 @@ image2 改 input.png "去掉右下角 logo，其他不变" edited.png
 - `OPENAI_API_KEY`：必需
 - `OPENAI_BASE_URL`：可选，默认 `https://api.openai.com/v1`；中转/New API/one-api 通常需要带 `/v1`
 - `OPENAI_IMAGE_MODEL`：可选，默认 `gpt-image-2`
+- `OPENAI_PROMPT_MODEL`：可选，默认 `gpt-5.4`，用于出图前增强提示词
 
 不要打印密钥值，只检查 set/not_set。
 
 ## 高级命令
 
 ```bash
-python3 /var/minis/skills/codex-image/scripts/openai_image_api.py gen "prompt" -o /var/minis/attachments/out.png --retries 6
+python3 /var/minis/skills/codex-image/scripts/openai_image_api.py gen "prompt" -o /var/minis/attachments/out.png --enhance --retries 6
 python3 /var/minis/skills/codex-image/scripts/openai_image_api.py edit --image /var/minis/attachments/in.png "edit" -o /var/minis/attachments/out.png
 ```
 
