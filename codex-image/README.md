@@ -1,21 +1,21 @@
-# minis-codex-image-skill
+# codex-image
 
-A standalone Minis skill for image generation/editing with `gpt-image-2`.
+Minis 本地图片技能，使用 `gpt-image-2` 生成/编辑图片。
 
-Source: <https://github.com/cc166/MinisSkills/tree/main/codex-image>
+来源：<https://github.com/cc166/MinisSkills/tree/main/codex-image>
 
-## Install
+## 安装
 
 ```bash
 git clone https://github.com/cc166/MinisSkills.git /tmp/MinisSkills
 sh /tmp/MinisSkills/codex-image/scripts/install.sh
 ```
 
-## Use
+## 用法
 
 ```bash
-image2 画 "提示词" [out.png]
-image2 改 input.png "修改要求" [out.png]
+image2 画 "提示词" [输出.png]
+image2 改 输入图.png "修改要求" [输出.png]
 ```
 
-Set `OPENAI_API_KEY`; optionally set `OPENAI_BASE_URL` and `OPENAI_IMAGE_MODEL`.
+需要设置 `OPENAI_API_KEY`；可选设置 `OPENAI_BASE_URL`、`OPENAI_IMAGE_MODEL`。

@@ -1,49 +1,60 @@
 ---
 name: codex-image
+version: 1.0.1
 local: true
 source: https://github.com/cc166/MinisSkills/tree/main/codex-image
+source_url: https://github.com/cc166/MinisSkills/tree/main/codex-image
+repository: https://github.com/cc166/MinisSkills
+homepage: https://github.com/cc166/MinisSkills/tree/main/codex-image
 upstream_policy: overwrite-from-user-repo-only
-description: Generate or edit images with gpt-image-2 through the user's OpenAI-compatible Images API. Use this skill whenever the user asks to draw/create/generate/edit images, says image2, gpt-image-2, OpenAI image API, codex image, or ChatGPT image generation. Prefer `image2 画/改`.
+description: 使用 gpt-image-2 进行图片生成与图片编辑的本地技能。用户说“画图、生成图片、改图、P图、image2、gpt-image-2、OpenAI 图片 API、Codex 图片”时触发；默认使用 `image2 画/改`，优先走用户自己的 OpenAI-compatible API。
 ---
 
 # codex-image
 
-Local Minis skill for image generation/editing with `gpt-image-2`.
+使用 `gpt-image-2` 生成/编辑图片的 Minis 本地技能。
 
-Source of truth: <https://github.com/cc166/MinisSkills/tree/main/codex-image>
+来源：<https://github.com/cc166/MinisSkills/tree/main/codex-image>
 
-## Use
+## 用法
 
 ```bash
-image2 画 "提示词" [out.png]
-image2 改 input.png "修改要求" [out.png]
+image2 画 "提示词" [输出.png]
+image2 改 输入图.png "修改要求" [输出.png]
 ```
 
-- Relative filenames resolve under `/var/minis/attachments/`.
-- `image2 "prompt"` equals `image2 画 "prompt"`.
-- `image2` auto-loads `/etc/profile` env variables.
-- Text-to-image uses retries for flaky gateways.
+示例：
 
-## Environment
+```bash
+image2 画 "赛博朋克猫，霓虹灯，电影感" cat.png
+image2 改 input.png "去掉右下角 logo，其他不变" edited.png
+```
 
-- `OPENAI_API_KEY` — required
-- `OPENAI_BASE_URL` — optional; default `https://api.openai.com/v1`; gateway URLs usually include `/v1`
-- `OPENAI_IMAGE_MODEL` — optional; default `gpt-image-2`
+说明：
 
-Never print secret values. Only check set/not-set.
+- 相对文件名默认在 `/var/minis/attachments/` 下读写。
+- `image2 "提示词"` 等同于 `image2 画 "提示词"`。
+- `image2` 会自动读取 `/etc/profile` 里的环境变量。
+- 生成图片时已内置多次重试，兼容部分网关的 `502` / `IncompleteRead`。
 
-## Advanced
+## 环境变量
+
+- `OPENAI_API_KEY`：必需
+- `OPENAI_BASE_URL`：可选，默认 `https://api.openai.com/v1`；中转/New API/one-api 通常需要带 `/v1`
+- `OPENAI_IMAGE_MODEL`：可选，默认 `gpt-image-2`
+
+不要打印密钥值，只检查 set/not_set。
+
+## 高级命令
 
 ```bash
 python3 /var/minis/skills/codex-image/scripts/openai_image_api.py gen "prompt" -o /var/minis/attachments/out.png --retries 6
 python3 /var/minis/skills/codex-image/scripts/openai_image_api.py edit --image /var/minis/attachments/in.png "edit" -o /var/minis/attachments/out.png
 ```
 
-The script supports OpenAI-compatible `/images/generations` and `/images/edits`, saves `b64_json` or URL responses, and tolerates transient `502` / `IncompleteRead` gateway issues.
+## 备用 Codex 链路
 
-## Fallback
-
-If the user API is unavailable and the user wants ChatGPT-session fallback, use:
+只有在用户 API 不可用且用户明确要 ChatGPT Session/Codex 回退时使用：
 
 ```bash
 python3 /var/minis/skills/codex-image/scripts/codex_image.py "prompt" -o /var/minis/attachments/out.png
