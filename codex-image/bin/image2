@@ -90,7 +90,7 @@ def main():
             usage(1)
         prompt = sys.argv[2]
         output = normalize_out(sys.argv[3] if len(sys.argv) >= 4 else None, "image2")
-        cmd = [sys.executable, SCRIPT, "gen", prompt, "-o", output, "--retries", "6", "--enhance"]
+        cmd = [sys.executable, SCRIPT, "gen", prompt, "-o", output, "--retries", "6", "--enhance", "--endpoint", "auto"]
         raise SystemExit(run(cmd))
 
     if mode in ("改", "编辑", "edit"):
@@ -105,7 +105,7 @@ def main():
     # shortcut: image2 "prompt" == image2 画 "prompt"
     prompt = " ".join(sys.argv[1:])
     output = normalize_out(None, "image2")
-    cmd = [sys.executable, SCRIPT, "gen", prompt, "-o", output, "--enhance"]
+    cmd = [sys.executable, SCRIPT, "gen", prompt, "-o", output, "--enhance", "--endpoint", "auto"]
     raise SystemExit(run(cmd))
 
 

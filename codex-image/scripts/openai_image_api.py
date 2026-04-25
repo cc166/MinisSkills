@@ -277,6 +277,10 @@ def write_output_from_response(raw, output, api_key=None):
         text = json.dumps(data, ensure_ascii=False)[:1200]
         die("No image data found in API response: " + text)
     item = items[0]
+    return write_image_item(item, output, api_key=api_key), data
+
+
+def write_image_item(item, output, api_key=None):
     b64 = item.get("b64_json") or item.get("base64") or item.get("image_base64")
     if b64:
         if "," in b64 and b64.strip().startswith("data:"):
@@ -284,7 +288,7 @@ def write_output_from_response(raw, output, api_key=None):
         img = base64.b64decode(b64)
         with open(output, "wb") as f:
             f.write(img)
-        return len(img), data
+        return len(img)
     url = item.get("url")
     if url:
         req = urllib.request.Request(url)
@@ -295,7 +299,7 @@ def write_output_from_response(raw, output, api_key=None):
             img = r.read()
         with open(output, "wb") as f:
             f.write(img)
-        return len(img), data
+        return len(img)
     die("First data item has neither b64_json nor url: " + json.dumps(item, ensure_ascii=False)[:800])
 
 
@@ -352,6 +356,58 @@ def extract_text_response(data):
     return ""
 
 
+def find_image_item_in_chat(data):
+    """Best-effort extraction of image payloads from chat-completions style responses."""
+    def walk(x):
+        if isinstance(x, dict):
+            if any(k in x for k in ("b64_json", "image_base64", "base64", "url")):
+                return x
+            # Common content formats: image_url.url may be data URL or normal URL.
+            if isinstance(x.get("image_url"), dict):
+                u = x["image_url"].get("url")
+                if isinstance(u, str) and (u.startswith("data:image") or u.startswith("http")):
+                    if u.startswith("data:image"):
+                        return {"b64_json": u}
+                    return {"url": u}
+            for v in x.values():
+                r = walk(v)
+                if r:
+                    return r
+        elif isinstance(x, list):
+            for v in x:
+                r = walk(v)
+                if r:
+                    return r
+        elif isinstance(x, str):
+            s = x.strip()
+            if s.startswith("data:image"):
+                return {"b64_json": s}
+            if len(s) > 1000 and (s.startswith("iVBOR") or s.startswith("/9j/")):
+                return {"b64_json": s}
+        return None
+    return walk(data)
+
+
+def generate_via_chat(api_key, base_url, prompt, model, output, args):
+    url = endpoint_url(base_url, "/chat/completions")
+    content = prompt
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": content}],
+    }
+    # Some OpenAI-compatible image chat endpoints accept size/quality at top level.
+    add_common_image_params(payload, args)
+    status, raw = request_json(url, api_key, payload, timeout=args.timeout, retries=args.retries)
+    if status < 200 or status >= 300:
+        raise RuntimeError("chat HTTP %s: %s" % (status, raw[:800]))
+    data = json.loads(raw)
+    item = find_image_item_in_chat(data)
+    if not item:
+        raise RuntimeError("chat response has no image payload: " + json.dumps(data, ensure_ascii=False)[:800])
+    size = write_image_item(item, output, api_key=api_key)
+    return size, data
+
+
 def enhance_prompt(api_key, base_url, prompt, model, timeout=90):
     url = endpoint_url(base_url, "/chat/completions")
     system = (
@@ -396,15 +452,33 @@ def cmd_gen(args):
             if args.enhance_required:
                 die("Prompt enhancement failed: " + str(e))
             print("[image2] prompt enhancement skipped: %s" % e, file=sys.stderr)
-    url = endpoint_url(base_url, "/images/generations")
-    payload = add_common_image_params({"model": model, "prompt": prompt}, args)
-    status, raw = request_json(url, api_key, payload, timeout=args.timeout, retries=args.retries)
-    if status < 200 or status >= 300:
-        die("HTTP %s from %s: %s" % (status, url, raw[:1200]))
-    size, data = write_output_from_response(raw, args.output, api_key=api_key)
+    image_endpoint = args.endpoint or os.environ.get("OPENAI_IMAGE_ENDPOINT") or "images-gen"
+    if image_endpoint not in ("auto", "images-gen", "chat"):
+        die("Invalid endpoint: " + image_endpoint)
+    data = {}
+    size = 0
+    used_endpoint = image_endpoint
+    if image_endpoint in ("images-gen", "auto"):
+        url = endpoint_url(base_url, "/images/generations")
+        payload = add_common_image_params({"model": model, "prompt": prompt}, args)
+        status, raw = request_json(url, api_key, payload, timeout=args.timeout, retries=args.retries)
+        if status >= 200 and status < 300:
+            size, data = write_output_from_response(raw, args.output, api_key=api_key)
+            used_endpoint = "images-gen"
+        elif image_endpoint == "images-gen":
+            die("HTTP %s from %s: %s" % (status, url, raw[:1200]))
+        else:
+            print("[image2] images-gen failed, trying chat endpoint: HTTP %s" % status, file=sys.stderr)
+    if not size and image_endpoint in ("chat", "auto"):
+        try:
+            size, data = generate_via_chat(api_key, base_url, prompt, model, args.output, args)
+            used_endpoint = "chat"
+        except Exception as e:
+            die("Chat image endpoint failed: " + str(e))
     print(json.dumps({
         "success": True,
         "mode": "openai_images_api_generation",
+        "endpoint": used_endpoint,
         "model": model,
         "path": args.output,
         "size": size,
@@ -454,6 +528,7 @@ def add_shared(ap):
     ap.add_argument("--enhance-required", action="store_true", help="fail if prompt rewrite fails")
     ap.add_argument("--enhance-model", default=None, help="default: env OPENAI_PROMPT_MODEL or gpt-5.4")
     ap.add_argument("--enhance-timeout", type=int, default=90)
+    ap.add_argument("--endpoint", choices=["auto", "images-gen", "chat"], default=None, help="image generation endpoint: auto/images-gen/chat; default env OPENAI_IMAGE_ENDPOINT or images-gen")
     ap.set_defaults(enhance=False)
 
 
