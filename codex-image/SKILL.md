@@ -34,7 +34,7 @@ image2 改 input.png "去掉右下角 logo，其他不变" edited.png
 
 - 相对文件名默认在 `/var/minis/attachments/` 下读写。
 - `image2 "提示词"` 等同于 `image2 画 "提示词"`。
-- `image2 画` 默认优先调用 Minis App 自带 `minis-model-use` 的 image-output 模型（默认 `gpt-image-1.5`，可用 `IMAGE2_MINIS_MODEL=gpt-5.5` 调整）；失败后回退到 `OPENAI_API_KEY` + `/images/generations`，并在回退链路中用 `gpt-5.4` 增强提示词。
+- `image2 画` 默认调用 Minis App 自带 `minis-model-use run --model gpt-image-2 --endpoint auto`，遵循 App 自己的端点选择逻辑；失败后才回退到 `OPENAI_API_KEY` + `/images/generations`，并在回退链路中用 `gpt-5.4` 增强提示词。
 - `image2` 会自动读取 `/etc/profile` 里的环境变量。
 - 生成接口支持 `images-gen / chat / auto`；默认 `auto`，优先 `/v1/images/generations`，失败时可回退 `/v1/chat/completions`。
 
@@ -45,7 +45,7 @@ image2 改 input.png "去掉右下角 logo，其他不变" edited.png
 - `OPENAI_IMAGE_MODEL`：可选，默认 `gpt-image-2`
 - `OPENAI_PROMPT_MODEL`：可选，默认 `gpt-5.4`，用于出图前增强提示词
 - `IMAGE2_USE_MINIS`：可选，默认 `1`；设为 `0` 可禁用 Minis 内置图像模型，直接走 OpenAI fallback
-- `IMAGE2_MINIS_MODEL`：可选，默认 `gpt-image-1.5`；也可设为 `gpt-5.5`
+- `IMAGE2_MINIS_MODEL`：可选，默认 `gpt-image-2`；一般不要改，除非你想临时用其它 Minis 已配置图像模型
 - `OPENAI_IMAGE_ENDPOINT`：可选，`auto` / `images-gen` / `chat`，fallback 链路默认 `auto`
 
 不要打印密钥值，只检查 set/not_set。
