@@ -1,113 +1,214 @@
 #!/usr/bin/env python3
-"""Tiny CLI wrapper for gpt-image-2.
+import base64, json, os, re, subprocess, sys, time
+from pathlib import Path
 
-Usage:
-  image2 画 "prompt" [output.png]
-  image2 改 input.png "edit instruction" [output.png]
-  image2 gen "prompt" [output.png]
-  image2 edit input.png "edit instruction" [output.png]
-"""
-import os
-import subprocess
-import sys
-from datetime import datetime
-
-SCRIPT = "/var/minis/skills/codex-image/scripts/openai_image_api.py"
 OUT_DIR = "/var/minis/attachments"
+FALLBACK_SCRIPT = "/var/minis/skills/codex-image/scripts/openai_image_api.py"
 
 
 def load_profile_env():
-    path = "/etc/profile"
     try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                line = line.strip()
-                if not line.startswith("export ") or "=" not in line:
-                    continue
-                name, val = line[len("export "):].split("=", 1)
-                name = name.strip()
-                if not name or name in os.environ:
-                    continue
-                val = val.strip()
-                if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
-                    val = val[1:-1]
-                os.environ[name] = val
+        for line in open('/etc/profile', encoding='utf-8', errors='ignore'):
+            line=line.strip()
+            if line.startswith('export ') and '=' in line:
+                name,val=line[7:].split('=',1); name=name.strip(); val=val.strip()
+                if len(val)>=2 and val[0]==val[-1] and val[0] in ('"', "'"):
+                    val=val[1:-1]
+                os.environ.setdefault(name,val)
     except Exception:
         pass
 
 
 def usage(code=0):
-    print("""用法:
+    print('''用法:
   image2 画 "提示词" [输出文件]
   image2 改 输入图 "修改要求" [输出文件]
 
-例子:
-  image2 画 "赛博朋克猫，霓虹灯，电影感"
-  image2 画 "极简 iOS 图标，蓝色 AI 助手" icon.png
-  image2 改 /var/minis/attachments/input.png "去掉右下角 logo，其他不变"
-  image2 改 input.png "换成夜景背景" edited.png
+默认:
+  画图优先用 Minis 内置 image-output 模型；失败再回退 OPENAI_API_KEY + /images/generations。
 
-环境变量:
-  OPENAI_API_KEY      必需
-  OPENAI_BASE_URL     可选，中转/one-api/New API 用
-  OPENAI_IMAGE_MODEL  可选，默认 gpt-image-2""")
+可选环境变量:
+  IMAGE2_USE_MINIS=1|0          默认 1
+  IMAGE2_MINIS_MODEL=gpt-image-1.5  默认优先 gpt-image-1.5；也可设 gpt-5.5
+  OPENAI_IMAGE_MODEL=gpt-image-2     fallback 默认
+  OPENAI_PROMPT_MODEL=gpt-5.4        fallback prompt 增强默认
+''')
     raise SystemExit(code)
 
 
 def normalize_out(path, prefix):
     if not path:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return os.path.join(OUT_DIR, f"{prefix}_{ts}.png")
-    if os.path.dirname(path):
-        return path
+        ts=time.strftime('%Y%m%d_%H%M%S')
+        return os.path.join(OUT_DIR, f'{prefix}_{ts}.png')
+    if os.path.dirname(path): return path
     return os.path.join(OUT_DIR, path)
 
 
 def normalize_in(path):
-    if os.path.exists(path):
-        return path
-    p = os.path.join(OUT_DIR, path)
-    if os.path.exists(p):
-        return p
-    return path
+    if os.path.exists(path): return path
+    p=os.path.join(OUT_DIR,path)
+    return p if os.path.exists(p) else path
 
 
-def run(cmd):
+def run_json(cmd, timeout=900):
+    r=subprocess.run(cmd,capture_output=True,text=True,timeout=timeout)
+    text=(r.stdout or '') + ('\n'+r.stderr if r.stderr else '')
+    return r.returncode, text
+
+
+def parse_json_loose(text):
+    text=text.strip()
+    try: return json.loads(text)
+    except Exception: pass
+    m=re.search(r'(\{.*\})', text, re.S)
+    if m:
+        try: return json.loads(m.group(1))
+        except Exception: return None
+    return None
+
+
+def find_image_payload(x):
+    if isinstance(x, dict):
+        # Common model-use file/result fields.
+        for k in ('path','file','image_path','output_path','url'):
+            v=x.get(k)
+            if isinstance(v,str) and (v.startswith('/var/minis/') or v.startswith('minis://') or v.startswith('http')):
+                return {'path':v} if not v.startswith('http') else {'url':v}
+        for k in ('b64_json','base64','image_base64','data'):
+            v=x.get(k)
+            if isinstance(v,str) and (v.startswith('iVBOR') or v.startswith('/9j/') or v.startswith('data:image')):
+                return {'b64':v}
+        if isinstance(x.get('image_url'), dict):
+            u=x['image_url'].get('url')
+            if isinstance(u,str): return {'url':u}
+        for v in x.values():
+            r=find_image_payload(v)
+            if r: return r
+    elif isinstance(x, list):
+        for v in x:
+            r=find_image_payload(v)
+            if r: return r
+    elif isinstance(x, str):
+        s=x.strip()
+        if s.startswith('minis://') or s.startswith('/var/minis/'):
+            return {'path':s}
+        if s.startswith('data:image') or s.startswith('iVBOR') or s.startswith('/9j/'):
+            return {'b64':s}
+    return None
+
+
+def minis_to_path(p):
+    if p.startswith('minis://'):
+        rest=p[len('minis://'):]
+        return '/var/minis/' + rest
+    return p
+
+
+def save_payload(payload, output):
+    import urllib.request
+    if 'path' in payload:
+        src=minis_to_path(payload['path'])
+        if src != output:
+            data=open(src,'rb').read()
+            open(output,'wb').write(data)
+        return os.path.getsize(output)
+    if 'b64' in payload:
+        b64=payload['b64']
+        if b64.startswith('data:image'):
+            b64=b64.split(',',1)[1]
+        data=base64.b64decode(b64)
+        open(output,'wb').write(data)
+        return len(data)
+    if 'url' in payload:
+        with urllib.request.urlopen(payload['url'],timeout=240) as r:
+            data=r.read()
+        open(output,'wb').write(data)
+        return len(data)
+    raise RuntimeError('no image payload')
+
+
+def minis_generate(prompt, output):
+    model=os.environ.get('IMAGE2_MINIS_MODEL') or 'gpt-image-1.5'
+    endpoint=os.environ.get('IMAGE2_MINIS_ENDPOINT') or 'auto'
+    inp='/tmp/image2_minis_input_%d.json' % os.getpid()
+    out='/tmp/image2_minis_output_%d.json' % os.getpid()
+    Path(inp).write_text(json.dumps({'messages':[{'role':'user','content':prompt}]},ensure_ascii=False),encoding='utf-8')
+    cmd=['minis-model-use','run','--model',model,'--endpoint',endpoint,'--input',inp,'--output',out,'--compact']
+    r=subprocess.run(cmd,capture_output=True,text=True,timeout=900)
+    combined=(r.stdout or '')+'\n'+(r.stderr or '')
+    if r.returncode!=0:
+        raise RuntimeError(combined.strip()[:800])
+    data=None
+    if os.path.exists(out):
+        try: data=json.loads(Path(out).read_text(encoding='utf-8'))
+        except Exception: data=None
+    if data is None:
+        data=parse_json_loose(combined)
+    payload=find_image_payload(data)
+    if not payload:
+        raise RuntimeError('minis-model-use returned no image payload: '+str(data)[:800])
+    size=save_payload(payload, output)
+    return {'backend':'minis-model-use','model':model,'endpoint':endpoint,'size':size}
+
+
+def fallback_generate(prompt, output):
+    cmd=[sys.executable,FALLBACK_SCRIPT,'gen',prompt,'-o',output,'--retries','6','--enhance','--endpoint','auto']
+    code,text=run_json(cmd,timeout=1200)
+    if code!=0:
+        raise RuntimeError(text.strip()[:1200])
+    if not os.path.exists(output):
+        raise RuntimeError('fallback exited 0 but output missing')
+    return {'backend':'openai-api-fallback','size':os.path.getsize(output),'raw':text[-1000:]}
+
+
+def generate(prompt, output):
     os.makedirs(OUT_DIR, exist_ok=True)
-    load_profile_env()
-    env = os.environ.copy()
-    env.setdefault("OPENAI_IMAGE_MODEL", "gpt-image-2")
-    return subprocess.call(cmd, env=env)
+    use_minis=os.environ.get('IMAGE2_USE_MINIS','1')!='0'
+    errors=[]
+    if use_minis:
+        try:
+            return minis_generate(prompt, output)
+        except Exception as e:
+            errors.append('minis-model-use: '+str(e))
+            print('[image2] minis-model-use failed, fallback to OpenAI Images API: %s' % e, file=sys.stderr)
+    res=fallback_generate(prompt, output)
+    if errors: res['fallback_reason']=errors[-1]
+    return res
+
+
+def edit_image(image, prompt, output):
+    cmd=[sys.executable,FALLBACK_SCRIPT,'edit','--image',image,prompt,'-o',output]
+    code,text=run_json(cmd,timeout=1200)
+    if code!=0:
+        print(text, file=sys.stderr)
+        return code
+    print(text)
+    return 0
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help", "帮助"):
+    load_profile_env()
+    if len(sys.argv)<2 or sys.argv[1] in ('-h','--help','help','帮助'):
         usage(0)
+    mode=sys.argv[1]
+    if mode in ('画','生成','gen','generate'):
+        if len(sys.argv)<3: usage(1)
+        prompt=sys.argv[2]
+        output=normalize_out(sys.argv[3] if len(sys.argv)>=4 else None,'image2')
+        res=generate(prompt,output)
+        res.update({'success':True,'path':output})
+        print(json.dumps(res,ensure_ascii=False,indent=2))
+        return
+    if mode in ('改','编辑','edit'):
+        if len(sys.argv)<4: usage(1)
+        image=normalize_in(sys.argv[2]); prompt=sys.argv[3]
+        output=normalize_out(sys.argv[4] if len(sys.argv)>=5 else None,'image2_edit')
+        raise SystemExit(edit_image(image,prompt,output))
+    prompt=' '.join(sys.argv[1:])
+    output=normalize_out(None,'image2')
+    res=generate(prompt,output)
+    res.update({'success':True,'path':output})
+    print(json.dumps(res,ensure_ascii=False,indent=2))
 
-    mode = sys.argv[1]
-    if mode in ("画", "生成", "gen", "generate"):
-        if len(sys.argv) < 3:
-            usage(1)
-        prompt = sys.argv[2]
-        output = normalize_out(sys.argv[3] if len(sys.argv) >= 4 else None, "image2")
-        cmd = [sys.executable, SCRIPT, "gen", prompt, "-o", output, "--retries", "6", "--enhance", "--endpoint", "auto"]
-        raise SystemExit(run(cmd))
-
-    if mode in ("改", "编辑", "edit"):
-        if len(sys.argv) < 4:
-            usage(1)
-        image = normalize_in(sys.argv[2])
-        prompt = sys.argv[3]
-        output = normalize_out(sys.argv[4] if len(sys.argv) >= 5 else None, "image2_edit")
-        cmd = [sys.executable, SCRIPT, "edit", "--image", image, prompt, "-o", output]
-        raise SystemExit(run(cmd))
-
-    # shortcut: image2 "prompt" == image2 画 "prompt"
-    prompt = " ".join(sys.argv[1:])
-    output = normalize_out(None, "image2")
-    cmd = [sys.executable, SCRIPT, "gen", prompt, "-o", output, "--enhance", "--endpoint", "auto"]
-    raise SystemExit(run(cmd))
-
-
-if __name__ == "__main__":
+if __name__=='__main__':
     main()

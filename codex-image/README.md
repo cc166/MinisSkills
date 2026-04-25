@@ -1,6 +1,6 @@
 # codex-image
 
-Minis 本地图片技能，使用 `gpt-image-2` 生成/编辑图片。
+Minis 本地图片技能，使用 Minis 内置 image-output 模型 / `gpt-image-2` 生成与编辑图片。
 
 来源：<https://github.com/cc166/MinisSkills/tree/main/codex-image>
 
@@ -18,8 +18,6 @@ image2 画 "提示词" [输出.png]
 image2 改 输入图.png "修改要求" [输出.png]
 ```
 
-`image2 画` 默认先用 `gpt-5.4` 增强提示词，再交给 `gpt-image-2` 出图；端点默认 `auto`，优先 `/v1/images/generations`，失败时可回退 `/v1/chat/completions`。
+`image2 画` 默认优先使用 Minis App 自带 `minis-model-use` image-output 模型（默认 `gpt-image-1.5`）；失败后回退到 `OPENAI_API_KEY` + OpenAI-compatible Images API，并在 fallback 链路用 `gpt-5.4` 增强提示词。
 
-需要设置 `OPENAI_API_KEY`；可选设置 `OPENAI_BASE_URL`、`OPENAI_IMAGE_MODEL`、`OPENAI_PROMPT_MODEL`、`OPENAI_IMAGE_ENDPOINT`。
-
-说明：生成接口优先用 `curl` 读取大体积 chunked 响应，避免 iSH Python `http.client` 对部分网关出现空响应或 `IncompleteRead`。
+可选环境变量：`IMAGE2_MINIS_MODEL`、`IMAGE2_USE_MINIS`、`OPENAI_BASE_URL`、`OPENAI_IMAGE_MODEL`、`OPENAI_PROMPT_MODEL`、`OPENAI_IMAGE_ENDPOINT`。
