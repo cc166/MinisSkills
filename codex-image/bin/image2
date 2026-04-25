@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Tiny CLI wrapper for gpt-image-2.
+
+Usage:
+  image2 画 "prompt" [output.png]
+  image2 改 input.png "edit instruction" [output.png]
+  image2 gen "prompt" [output.png]
+  image2 edit input.png "edit instruction" [output.png]
+"""
+import os
+import subprocess
+import sys
+from datetime import datetime
+
+SCRIPT = "/var/minis/skills/codex-image/scripts/openai_image_api.py"
+OUT_DIR = "/var/minis/attachments"
+
+
+def load_profile_env():
+    path = "/etc/profile"
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line.startswith("export ") or "=" not in line:
+                    continue
+                name, val = line[len("export "):].split("=", 1)
+                name = name.strip()
+                if not name or name in os.environ:
+                    continue
+                val = val.strip()
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+                    val = val[1:-1]
+                os.environ[name] = val
+    except Exception:
+        pass
+
+
+def usage(code=0):
+    print("""用法:
+  image2 画 "提示词" [输出文件]
+  image2 改 输入图 "修改要求" [输出文件]
+
+例子:
+  image2 画 "赛博朋克猫，霓虹灯，电影感"
+  image2 画 "极简 iOS 图标，蓝色 AI 助手" icon.png
+  image2 改 /var/minis/attachments/input.png "去掉右下角 logo，其他不变"
+  image2 改 input.png "换成夜景背景" edited.png
+
+环境变量:
+  OPENAI_API_KEY      必需
+  OPENAI_BASE_URL     可选，中转/one-api/New API 用
+  OPENAI_IMAGE_MODEL  可选，默认 gpt-image-2""")
+    raise SystemExit(code)
+
+
+def normalize_out(path, prefix):
+    if not path:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return os.path.join(OUT_DIR, f"{prefix}_{ts}.png")
+    if os.path.dirname(path):
+        return path
+    return os.path.join(OUT_DIR, path)
+
+
+def normalize_in(path):
+    if os.path.exists(path):
+        return path
+    p = os.path.join(OUT_DIR, path)
+    if os.path.exists(p):
+        return p
+    return path
+
+
+def run(cmd):
+    os.makedirs(OUT_DIR, exist_ok=True)
+    load_profile_env()
+    env = os.environ.copy()
+    env.setdefault("OPENAI_IMAGE_MODEL", "gpt-image-2")
+    return subprocess.call(cmd, env=env)
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help", "帮助"):
+        usage(0)
+
+    mode = sys.argv[1]
+    if mode in ("画", "生成", "gen", "generate"):
+        if len(sys.argv) < 3:
+            usage(1)
+        prompt = sys.argv[2]
+        output = normalize_out(sys.argv[3] if len(sys.argv) >= 4 else None, "image2")
+        cmd = [sys.executable, SCRIPT, "gen", prompt, "-o", output, "--retries", "6"]
+        raise SystemExit(run(cmd))
+
+    if mode in ("改", "编辑", "edit"):
+        if len(sys.argv) < 4:
+            usage(1)
+        image = normalize_in(sys.argv[2])
+        prompt = sys.argv[3]
+        output = normalize_out(sys.argv[4] if len(sys.argv) >= 5 else None, "image2_edit")
+        cmd = [sys.executable, SCRIPT, "edit", "--image", image, prompt, "-o", output]
+        raise SystemExit(run(cmd))
+
+    # shortcut: image2 "prompt" == image2 画 "prompt"
+    prompt = " ".join(sys.argv[1:])
+    output = normalize_out(None, "image2")
+    cmd = [sys.executable, SCRIPT, "gen", prompt, "-o", output]
+    raise SystemExit(run(cmd))
+
+
+if __name__ == "__main__":
+    main()
