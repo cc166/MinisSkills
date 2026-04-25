@@ -23,6 +23,8 @@ import urllib.parse
 import urllib.request
 import http.client
 import http.client as _http_client
+import subprocess
+import tempfile
 
 
 def die(msg, code=1):
@@ -56,6 +58,14 @@ def load_profile_env():
         pass
 
 
+def shutil_which(cmd):
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        p = os.path.join(d, cmd)
+        if os.path.exists(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+
 def endpoint_url(base_url, endpoint):
     base = (base_url or "https://api.openai.com/v1").rstrip("/")
     if not endpoint.startswith("/"):
@@ -64,61 +74,102 @@ def endpoint_url(base_url, endpoint):
 
 
 def request_json(url, api_key, payload, timeout=240, retries=2):
-    body = json.dumps(payload).encode("utf-8")
+    """POST JSON and return (status, raw_text).
+
+    Prefer curl when available: it handles this gateway's large chunked image
+    responses reliably in iSH, while Python http.client/urllib can sometimes
+    return empty output or raise IncompleteRead for valid responses.
+    """
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     last_status, last_raw = None, ""
-    parsed = urllib.parse.urlparse(url)
-    path = parsed.path or "/"
-    if parsed.query:
-        path += "?" + parsed.query
-    headers = {
-        "Authorization": "Bearer " + api_key,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Connection": "close",
-    }
     org = os.environ.get("OPENAI_ORG_ID")
     project = os.environ.get("OPENAI_PROJECT")
-    if org:
-        headers["OpenAI-Organization"] = org
-    if project:
-        headers["OpenAI-Project"] = project
-    for attempt in range(retries + 1):
-        conn = None
-        try:
-            conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-            conn = conn_cls(parsed.netloc, timeout=timeout, context=ssl.create_default_context()) if parsed.scheme == "https" else conn_cls(parsed.netloc, timeout=timeout)
-            conn.request("POST", path, body=body, headers=headers)
-            resp = conn.getresponse()
-            chunks = []
-            while True:
+    if shutil_which("curl"):
+        for attempt in range(retries + 1):
+            fd, payload_path = tempfile.mkstemp(prefix="image2_payload_", suffix=".json")
+            os.close(fd)
+            out_fd, out_path = tempfile.mkstemp(prefix="image2_response_", suffix=".json")
+            os.close(out_fd)
+            try:
+                with open(payload_path, "wb") as f:
+                    f.write(body)
+                cmd = [
+                    "curl", "-sS", "-L",
+                    "--max-time", str(timeout),
+                    "-o", out_path,
+                    "-w", "%{http_code}",
+                    "-H", "Authorization: Bearer " + api_key,
+                    "-H", "Content-Type: application/json",
+                    "-H", "Accept: application/json",
+                ]
+                if org:
+                    cmd += ["-H", "OpenAI-Organization: " + org]
+                if project:
+                    cmd += ["-H", "OpenAI-Project: " + project]
+                cmd += ["--data", "@" + payload_path, url]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 30)
+                status_text = (r.stdout or "").strip()[-3:]
+                status = int(status_text) if status_text.isdigit() else 0
                 try:
-                    chunk = resp.read(65536)
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
+                    with open(out_path, "rb") as f:
+                        raw = f.read().decode("utf-8", errors="replace")
+                except Exception:
+                    raw = ""
+                if status >= 200 and status < 300:
+                    return status, raw
+                last_status, last_raw = status, raw or r.stderr
+                if status not in (408, 409, 425, 429, 500, 502, 503, 504) or attempt >= retries:
+                    return last_status, last_raw
+            except Exception as e:
+                last_status = 0
+                last_raw = type(e).__name__ + ": " + str(e)
+                if attempt >= retries:
+                    return last_status, last_raw
+            finally:
+                for p in (payload_path, out_path):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+            time.sleep(2 * (attempt + 1))
+        return last_status or 0, last_raw
+
+    # Fallback pure Python path.
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Authorization", "Bearer " + api_key)
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Accept", "application/json")
+        if org:
+            req.add_header("OpenAI-Organization", org)
+        if project:
+            req.add_header("OpenAI-Project", project)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context()) as r:
+                try:
+                    raw_bytes = r.read()
                 except _http_client.IncompleteRead as e:
-                    if e.partial:
-                        chunks.append(e.partial)
-                    break
-            status = resp.status
-            raw = b"".join(chunks).decode("utf-8", errors="replace")
-            conn.close()
-            if status >= 200 and status < 300:
-                return status, raw
-            last_status, last_raw = status, raw
-            if status not in (408, 409, 425, 429, 500, 502, 503, 504) or attempt >= retries:
+                    raw_bytes = e.partial or b""
+                return r.status, raw_bytes.decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as e:
+            last_status = e.code
+            try:
+                last_raw = e.read().decode("utf-8", errors="replace")
+            except _http_client.IncompleteRead as ir:
+                last_raw = (ir.partial or b"").decode("utf-8", errors="replace")
+            if e.code not in (408, 409, 425, 429, 500, 502, 503, 504) or attempt >= retries:
                 return last_status, last_raw
         except Exception as e:
+            partial = getattr(e, "partial", None)
+            if partial:
+                try:
+                    return 200, partial.decode("utf-8", errors="replace")
+                except Exception:
+                    pass
             last_status = 0
             last_raw = type(e).__name__ + ": " + str(e)
             if attempt >= retries:
                 return last_status, last_raw
-        finally:
-            try:
-                if conn:
-                    conn.close()
-            except Exception:
-                pass
         time.sleep(2 * (attempt + 1))
     return last_status or 0, last_raw
 

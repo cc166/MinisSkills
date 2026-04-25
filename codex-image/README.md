@@ -19,3 +19,5 @@ image2 改 输入图.png "修改要求" [输出.png]
 ```
 
 需要设置 `OPENAI_API_KEY`；可选设置 `OPENAI_BASE_URL`、`OPENAI_IMAGE_MODEL`。
+
+说明：生成接口优先用 `curl` 读取大体积 chunked 响应，避免 iSH Python `http.client` 对部分网关出现空响应或 `IncompleteRead`。

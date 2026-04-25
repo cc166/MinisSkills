@@ -35,7 +35,7 @@ image2 改 input.png "去掉右下角 logo，其他不变" edited.png
 - 相对文件名默认在 `/var/minis/attachments/` 下读写。
 - `image2 "提示词"` 等同于 `image2 画 "提示词"`。
 - `image2` 会自动读取 `/etc/profile` 里的环境变量。
-- 生成图片时已内置多次重试，兼容部分网关的 `502` / `IncompleteRead`。
+- 生成图片时已内置多次重试，并优先用 `curl` 稳定读取大体积响应，兼容部分网关的 `502` / `IncompleteRead`。
 
 ## 环境变量
 
