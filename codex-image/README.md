@@ -2,11 +2,13 @@
 
 A standalone Minis skill for image generation/editing with `gpt-image-2`.
 
+Source: <https://github.com/cc166/MinisSkills/tree/main/codex-image>
+
 ## Install
 
 ```bash
-git clone https://github.com/cc166/minis-codex-image-skill.git /tmp/minis-codex-image-skill
-sh /tmp/minis-codex-image-skill/scripts/install.sh
+git clone https://github.com/cc166/MinisSkills.git /tmp/MinisSkills
+sh /tmp/MinisSkills/codex-image/scripts/install.sh
 ```
 
 ## Use

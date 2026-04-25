@@ -1,7 +1,7 @@
 ---
 name: codex-image
 local: true
-source: https://github.com/cc166/minis-codex-image-skill
+source: https://github.com/cc166/MinisSkills/tree/main/codex-image
 upstream_policy: overwrite-from-user-repo-only
 description: Generate or edit images with gpt-image-2 through the user's OpenAI-compatible Images API. Use this skill whenever the user asks to draw/create/generate/edit images, says image2, gpt-image-2, OpenAI image API, codex image, or ChatGPT image generation. Prefer `image2 画/改`.
 ---
@@ -10,7 +10,7 @@ description: Generate or edit images with gpt-image-2 through the user's OpenAI-
 
 Local Minis skill for image generation/editing with `gpt-image-2`.
 
-Source of truth: <https://github.com/cc166/minis-codex-image-skill>
+Source of truth: <https://github.com/cc166/MinisSkills/tree/main/codex-image>
 
 ## Use
 
