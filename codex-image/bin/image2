@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-import base64, json, os, re, subprocess, sys, time
-from pathlib import Path
+import base64, json, os, subprocess, sys, time, urllib.request
 
 OUT_DIR = "/var/minis/attachments"
 FALLBACK_SCRIPT = "/var/minis/skills/codex-image/scripts/openai_image_api.py"
@@ -9,12 +8,13 @@ FALLBACK_SCRIPT = "/var/minis/skills/codex-image/scripts/openai_image_api.py"
 def load_profile_env():
     try:
         for line in open('/etc/profile', encoding='utf-8', errors='ignore'):
-            line=line.strip()
+            line = line.strip()
             if line.startswith('export ') and '=' in line:
-                name,val=line[7:].split('=',1); name=name.strip(); val=val.strip()
-                if len(val)>=2 and val[0]==val[-1] and val[0] in ('"', "'"):
-                    val=val[1:-1]
-                os.environ.setdefault(name,val)
+                name, val = line[7:].split('=', 1)
+                name = name.strip(); val = val.strip()
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+                    val = val[1:-1]
+                os.environ.setdefault(name, val)
     except Exception:
         pass
 
@@ -25,190 +25,191 @@ def usage(code=0):
   image2 改 输入图 "修改要求" [输出文件]
 
 默认:
-  画图优先用 Minis 内置 image-output 模型；失败再回退 OPENAI_API_KEY + /images/generations。
+  image2 画 直接走 Minis App 自带 minis-model-use：
+  minis-model-use run --model gpt-image-2 --endpoint auto
 
 可选环境变量:
-  IMAGE2_USE_MINIS=1|0          默认 1
-  IMAGE2_MINIS_MODEL=gpt-image-2    默认使用你在 Minis 中配置的 gpt-image-2
-  OPENAI_IMAGE_MODEL=gpt-image-2     fallback 默认
-  OPENAI_PROMPT_MODEL=gpt-5.4        fallback prompt 增强默认
+  IMAGE2_MINIS_MODEL=gpt-image-2   默认 gpt-image-2
+  IMAGE2_MINIS_ENDPOINT=auto       默认 auto
 ''')
     raise SystemExit(code)
 
 
 def normalize_out(path, prefix):
     if not path:
-        ts=time.strftime('%Y%m%d_%H%M%S')
+        ts = time.strftime('%Y%m%d_%H%M%S')
         return os.path.join(OUT_DIR, f'{prefix}_{ts}.png')
-    if os.path.dirname(path): return path
+    if os.path.dirname(path):
+        return path
     return os.path.join(OUT_DIR, path)
 
 
 def normalize_in(path):
-    if os.path.exists(path): return path
-    p=os.path.join(OUT_DIR,path)
+    if os.path.exists(path):
+        return path
+    p = os.path.join(OUT_DIR, path)
     return p if os.path.exists(p) else path
 
 
-def run_json(cmd, timeout=900):
-    r=subprocess.run(cmd,capture_output=True,text=True,timeout=timeout)
-    text=(r.stdout or '') + ('\n'+r.stderr if r.stderr else '')
-    return r.returncode, text
-
-
 def parse_json_loose(text):
-    text=text.strip()
-    try: return json.loads(text)
-    except Exception: pass
-    m=re.search(r'(\{.*\})', text, re.S)
-    if m:
-        try: return json.loads(m.group(1))
-        except Exception: return None
+    text = (text or '').strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    start = text.find('{')
+    end = text.rfind('}')
+    if start >= 0 and end > start:
+        try:
+            return json.loads(text[start:end+1])
+        except Exception:
+            pass
     return None
 
 
 def find_image_payload(x):
     if isinstance(x, dict):
-        # Common model-use file/result fields.
-        for k in ('path','file','image_path','output_path','url'):
-            v=x.get(k)
-            if isinstance(v,str) and (v.startswith('/var/minis/') or v.startswith('minis://') or v.startswith('http')):
-                return {'path':v} if not v.startswith('http') else {'url':v}
-        for k in ('b64_json','base64','image_base64','data'):
-            v=x.get(k)
-            if isinstance(v,str) and (v.startswith('iVBOR') or v.startswith('/9j/') or v.startswith('data:image')):
-                return {'b64':v}
+        media = x.get('media_files')
+        if isinstance(media, list):
+            for item in media:
+                if isinstance(item, dict):
+                    p = item.get('path')
+                    if isinstance(p, str) and p:
+                        return {'path': p}
+        for k in ('path', 'image_path', 'output_path', 'file', 'url'):
+            v = x.get(k)
+            if isinstance(v, str) and v:
+                if v.startswith('/var/minis/') or v.startswith('minis://'):
+                    return {'path': v}
+                if v.startswith('http'):
+                    return {'url': v}
+        for k in ('b64_json', 'base64', 'image_base64'):
+            v = x.get(k)
+            if isinstance(v, str) and v:
+                return {'b64': v}
         if isinstance(x.get('image_url'), dict):
-            u=x['image_url'].get('url')
-            if isinstance(u,str): return {'url':u}
+            u = x['image_url'].get('url')
+            if isinstance(u, str) and u:
+                if u.startswith('http'):
+                    return {'url': u}
+                return {'b64': u}
         for v in x.values():
-            r=find_image_payload(v)
-            if r: return r
+            r = find_image_payload(v)
+            if r:
+                return r
     elif isinstance(x, list):
         for v in x:
-            r=find_image_payload(v)
-            if r: return r
+            r = find_image_payload(v)
+            if r:
+                return r
     elif isinstance(x, str):
-        s=x.strip()
-        if s.startswith('minis://') or s.startswith('/var/minis/'):
-            return {'path':s}
+        s = x.strip()
+        if s.startswith('/var/minis/') or s.startswith('minis://'):
+            return {'path': s}
+        if s.startswith('http'):
+            return {'url': s}
         if s.startswith('data:image') or s.startswith('iVBOR') or s.startswith('/9j/'):
-            return {'b64':s}
+            return {'b64': s}
     return None
 
 
 def minis_to_path(p):
     if p.startswith('minis://'):
-        rest=p[len('minis://'):]
-        return '/var/minis/' + rest
+        return '/var/minis/' + p[len('minis://'):]
     return p
 
 
 def save_payload(payload, output):
-    import urllib.request
     if 'path' in payload:
-        src=minis_to_path(payload['path'])
+        src = minis_to_path(payload['path'])
         if src != output:
-            data=open(src,'rb').read()
-            open(output,'wb').write(data)
+            data = open(src, 'rb').read()
+            open(output, 'wb').write(data)
         return os.path.getsize(output)
     if 'b64' in payload:
-        b64=payload['b64']
+        b64 = payload['b64']
         if b64.startswith('data:image'):
-            b64=b64.split(',',1)[1]
-        data=base64.b64decode(b64)
-        open(output,'wb').write(data)
+            b64 = b64.split(',', 1)[1]
+        data = base64.b64decode(b64)
+        open(output, 'wb').write(data)
         return len(data)
     if 'url' in payload:
-        with urllib.request.urlopen(payload['url'],timeout=240) as r:
-            data=r.read()
-        open(output,'wb').write(data)
+        with urllib.request.urlopen(payload['url'], timeout=240) as r:
+            data = r.read()
+        open(output, 'wb').write(data)
         return len(data)
-    raise RuntimeError('no image payload')
+    raise RuntimeError('未找到图像输出')
 
 
 def minis_generate(prompt, output):
-    model=os.environ.get('IMAGE2_MINIS_MODEL') or os.environ.get('OPENAI_IMAGE_MODEL') or 'gpt-image-2'
-    endpoint=os.environ.get('IMAGE2_MINIS_ENDPOINT') or 'auto'
-    inp='/tmp/image2_minis_input_%d.json' % os.getpid()
-    out='/tmp/image2_minis_output_%d.json' % os.getpid()
-    Path(inp).write_text(json.dumps({'messages':[{'role':'user','content':prompt}]},ensure_ascii=False),encoding='utf-8')
-    cmd=['minis-model-use','run','--model',model,'--endpoint',endpoint,'--input',inp,'--output',out,'--compact']
-    r=subprocess.run(cmd,capture_output=True,text=True,timeout=900)
-    combined=(r.stdout or '')+'\n'+(r.stderr or '')
-    if r.returncode!=0:
-        raise RuntimeError(combined.strip()[:800])
-    data=None
+    model = os.environ.get('IMAGE2_MINIS_MODEL') or 'gpt-image-2'
+    endpoint = os.environ.get('IMAGE2_MINIS_ENDPOINT') or 'auto'
+    inp = '/tmp/image2_minis_input_%d.json' % os.getpid()
+    out = '/tmp/image2_minis_output_%d.json' % os.getpid()
+    with open(inp, 'w', encoding='utf-8') as f:
+        json.dump({'messages': [{'role': 'user', 'content': prompt}]}, f, ensure_ascii=False)
+    cmd = ['minis-model-use', 'run', '--model', model, '--endpoint', endpoint, '--input', inp, '--output', out, '--compact']
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    text = (r.stdout or '') + ('\n' + r.stderr if r.stderr else '')
+    data = None
     if os.path.exists(out):
-        try: data=json.loads(Path(out).read_text(encoding='utf-8'))
-        except Exception: data=None
-    if data is None:
-        data=parse_json_loose(combined)
-    payload=find_image_payload(data)
-    if not payload:
-        raise RuntimeError('minis-model-use returned no image payload: '+str(data)[:800])
-    size=save_payload(payload, output)
-    return {'backend':'minis-model-use','model':model,'endpoint':endpoint,'size':size}
-
-
-def fallback_generate(prompt, output):
-    cmd=[sys.executable,FALLBACK_SCRIPT,'gen',prompt,'-o',output,'--retries','6','--enhance','--endpoint','auto']
-    code,text=run_json(cmd,timeout=1200)
-    if code!=0:
-        raise RuntimeError(text.strip()[:1200])
-    if not os.path.exists(output):
-        raise RuntimeError('fallback exited 0 but output missing')
-    return {'backend':'openai-api-fallback','size':os.path.getsize(output),'raw':text[-1000:]}
-
-
-def generate(prompt, output):
-    os.makedirs(OUT_DIR, exist_ok=True)
-    use_minis=os.environ.get('IMAGE2_USE_MINIS','1')!='0'
-    errors=[]
-    if use_minis:
         try:
-            return minis_generate(prompt, output)
-        except Exception as e:
-            errors.append('minis-model-use: '+str(e))
-            print('[image2] minis-model-use failed, fallback to OpenAI Images API: %s' % e, file=sys.stderr)
-    res=fallback_generate(prompt, output)
-    if errors: res['fallback_reason']=errors[-1]
-    return res
+            with open(out, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            data = None
+    if data is None:
+        data = parse_json_loose(text)
+    if r.returncode != 0:
+        raise RuntimeError((text or 'minis-model-use failed').strip()[:1200])
+    payload = find_image_payload(data)
+    if not payload:
+        raise RuntimeError('minis-model-use 未返回可识别的图片数据: ' + str(data)[:1200])
+    size = save_payload(payload, output)
+    return {'backend': 'minis-model-use', 'model': model, 'endpoint': endpoint, 'size': size}
 
 
 def edit_image(image, prompt, output):
-    cmd=[sys.executable,FALLBACK_SCRIPT,'edit','--image',image,prompt,'-o',output]
-    code,text=run_json(cmd,timeout=1200)
-    if code!=0:
+    cmd = [sys.executable, FALLBACK_SCRIPT, 'edit', '--image', image, prompt, '-o', output]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+    text = (r.stdout or '') + ('\n' + r.stderr if r.stderr else '')
+    if r.returncode != 0:
         print(text, file=sys.stderr)
-        return code
+        return r.returncode
     print(text)
     return 0
 
 
 def main():
     load_profile_env()
-    if len(sys.argv)<2 or sys.argv[1] in ('-h','--help','help','帮助'):
+    os.makedirs(OUT_DIR, exist_ok=True)
+    if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help', 'help', '帮助'):
         usage(0)
-    mode=sys.argv[1]
-    if mode in ('画','生成','gen','generate'):
-        if len(sys.argv)<3: usage(1)
-        prompt=sys.argv[2]
-        output=normalize_out(sys.argv[3] if len(sys.argv)>=4 else None,'image2')
-        res=generate(prompt,output)
-        res.update({'success':True,'path':output})
-        print(json.dumps(res,ensure_ascii=False,indent=2))
+    mode = sys.argv[1]
+    if mode in ('画', '生成', 'gen', 'generate'):
+        if len(sys.argv) < 3:
+            usage(1)
+        prompt = sys.argv[2]
+        output = normalize_out(sys.argv[3] if len(sys.argv) >= 4 else None, 'image2')
+        res = minis_generate(prompt, output)
+        res.update({'success': True, 'path': output})
+        print(json.dumps(res, ensure_ascii=False, indent=2))
         return
-    if mode in ('改','编辑','edit'):
-        if len(sys.argv)<4: usage(1)
-        image=normalize_in(sys.argv[2]); prompt=sys.argv[3]
-        output=normalize_out(sys.argv[4] if len(sys.argv)>=5 else None,'image2_edit')
-        raise SystemExit(edit_image(image,prompt,output))
-    prompt=' '.join(sys.argv[1:])
-    output=normalize_out(None,'image2')
-    res=generate(prompt,output)
-    res.update({'success':True,'path':output})
-    print(json.dumps(res,ensure_ascii=False,indent=2))
+    if mode in ('改', '编辑', 'edit'):
+        if len(sys.argv) < 4:
+            usage(1)
+        image = normalize_in(sys.argv[2])
+        prompt = sys.argv[3]
+        output = normalize_out(sys.argv[4] if len(sys.argv) >= 5 else None, 'image2_edit')
+        raise SystemExit(edit_image(image, prompt, output))
+    prompt = ' '.join(sys.argv[1:])
+    output = normalize_out(None, 'image2')
+    res = minis_generate(prompt, output)
+    res.update({'success': True, 'path': output})
+    print(json.dumps(res, ensure_ascii=False, indent=2))
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
     main()
