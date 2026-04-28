@@ -26,13 +26,13 @@ def usage(code=0):
 
 默认:
   image2 画 先用 AI 优化提示词，再走 Minis App 自带 minis-model-use：
-  minis-model-use run --model gpt-image-2 --endpoint images-gen
+  minis-model-use run --model gpt-image-2 --endpoint auto
 
 可选环境变量:
   IMAGE2_OPTIMIZE_PROMPT=1          默认 1；设 0 可跳过提示词优化
   IMAGE2_PROMPT_MODEL=gpt-5.4       默认 gpt-5.4
   IMAGE2_MINIS_MODEL=gpt-image-2      默认 gpt-image-2
-  IMAGE2_MINIS_ENDPOINT=images-gen    默认 images-gen；需要自动切换时可设 auto
+  IMAGE2_MINIS_ENDPOINT=auto          默认 auto；让 Minis 自己选择端点
 ''')
     raise SystemExit(code)
 
@@ -203,7 +203,7 @@ def optimize_prompt(prompt):
 
 def minis_generate(prompt, output):
     model = os.environ.get('IMAGE2_MINIS_MODEL') or 'gpt-image-2'
-    endpoint = os.environ.get('IMAGE2_MINIS_ENDPOINT') or 'images-gen'
+    endpoint = os.environ.get('IMAGE2_MINIS_ENDPOINT') or 'auto'
     inp = '/tmp/image2_minis_input_%d.json' % os.getpid()
     out = '/tmp/image2_minis_output_%d.json' % os.getpid()
     with open(inp, 'w', encoding='utf-8') as f:

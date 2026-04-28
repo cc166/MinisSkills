@@ -1,13 +1,13 @@
 ---
 name: codex-image
-version: 1.0.5
+version: 1.0.6
 local: true
 source: https://github.com/cc166/MinisSkills/tree/main/codex-image
 source_url: https://github.com/cc166/MinisSkills/tree/main/codex-image
 repository: https://github.com/cc166/MinisSkills
 homepage: https://github.com/cc166/MinisSkills/tree/main/codex-image
 upstream_policy: overwrite-from-user-repo-only
-description: 使用 gpt-image-2 生成图片的本地技能。用户说“image2画”“image2 画”“用 image2 画”“gpt-image-2 画图”“生成图片”“画图”时触发。默认执行 `image2 画 "提示词"`：先用 AI 优化提示词，再用 Minis App 原生 `minis-model-use run --model gpt-image-2 --endpoint images-gen` 出图。
+description: 使用 gpt-image-2 生成图片的本地技能。用户说“image2画”“image2 画”“用 image2 画”“gpt-image-2 画图”“生成图片”“画图”时触发。默认执行 `image2 画 "提示词"`：先用 AI 优化提示词，再用 Minis App 原生 `minis-model-use run --model gpt-image-2 --endpoint auto` 出图。
 ---
 
 # codex-image
@@ -27,7 +27,7 @@ image2 画 "提示词" [输出.png]
 1. 用 `gpt-5.4` 优化用户提示词。
 2. 调用 Minis 原生：
    ```bash
-   minis-model-use run --model gpt-image-2 --endpoint images-gen
+   minis-model-use run --model gpt-image-2 --endpoint auto
    ```
 3. 直接返回生成图片。
 
@@ -36,7 +36,7 @@ image2 画 "提示词" [输出.png]
 - `IMAGE2_OPTIMIZE_PROMPT=0`：跳过提示词优化
 - `IMAGE2_PROMPT_MODEL=gpt-5.4`：提示词优化模型
 - `IMAGE2_MINIS_MODEL=gpt-image-2`：出图模型
-- `IMAGE2_MINIS_ENDPOINT=images-gen`：出图端点；可设为 `auto`
+- `IMAGE2_MINIS_ENDPOINT=auto`：出图端点；默认 `auto`，让 Minis 自己选择
 
 ## 工作流
 

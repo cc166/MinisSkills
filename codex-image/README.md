@@ -13,7 +13,7 @@ image2 画 "提示词" [输出.png]
 默认流程：
 
 ```text
-gpt-5.4 优化提示词 → minis-model-use run --model gpt-image-2 --endpoint images-gen
+gpt-5.4 优化提示词 → minis-model-use run --model gpt-image-2 --endpoint auto
 ```
 
 可用 `IMAGE2_OPTIMIZE_PROMPT=0` 跳过提示词优化。
