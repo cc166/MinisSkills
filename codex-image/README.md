@@ -1,6 +1,6 @@
 # codex-image
 
-本地 `gpt-image-2` 图片生成技能。
+本地图片生成技能。
 
 ## 用法
 
@@ -13,7 +13,11 @@ image2 画 "提示词" [输出.png]
 默认流程：
 
 ```text
-gpt-5.4 优化提示词 → minis-model-use run --model gpt-image-2 --endpoint auto
+gpt-5.5 /v1/responses + image_generation tool
 ```
 
-可用 `IMAGE2_OPTIMIZE_PROMPT=0` 跳过提示词优化。
+失败时回退：
+
+```text
+minis-model-use run --model gpt-image-2 --endpoint auto
+```

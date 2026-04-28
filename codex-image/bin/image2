@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64, json, os, subprocess, sys, time, urllib.request
+import base64, json, os, re, subprocess, sys, tempfile, time, urllib.request
 
 OUT_DIR = "/var/minis/attachments"
 FALLBACK_SCRIPT = "/var/minis/skills/codex-image/scripts/openai_image_api.py"
@@ -25,22 +25,22 @@ def usage(code=0):
   image2 改 输入图 "修改要求" [输出文件]
 
 默认:
-  image2 画 先用 AI 优化提示词，再走 Minis App 自带 minis-model-use：
-  minis-model-use run --model gpt-image-2 --endpoint auto
+  image2 画 直接走 OpenAI-compatible /v1/responses：
+  model=gpt-5.5 + tools=[{"type":"image_generation"}]
 
 可选环境变量:
-  IMAGE2_OPTIMIZE_PROMPT=1          默认 1；设 0 可跳过提示词优化
-  IMAGE2_PROMPT_MODEL=gpt-5.4       默认 gpt-5.4
-  IMAGE2_MINIS_MODEL=gpt-image-2      默认 gpt-image-2
-  IMAGE2_MINIS_ENDPOINT=auto          默认 auto；让 Minis 自己选择端点
+  IMAGE2_RESPONSES_MODEL=gpt-5.5  默认 gpt-5.5
+  IMAGE2_RESPONSES_BASE_URL       默认 OPENAI_BASE_URL；若未设则 https://ai.input.im/v1
+  IMAGE2_USE_RESPONSES=1          默认 1；设 0 可改用 minis-model-use fallback
+  IMAGE2_MINIS_MODEL=gpt-image-2  fallback 模型
+  IMAGE2_MINIS_ENDPOINT=auto      fallback 端点
 ''')
     raise SystemExit(code)
 
 
 def normalize_out(path, prefix):
     if not path:
-        ts = time.strftime('%Y%m%d_%H%M%S')
-        return os.path.join(OUT_DIR, f'{prefix}_{ts}.png')
+        return os.path.join(OUT_DIR, f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.png")
     if os.path.dirname(path):
         return path
     return os.path.join(OUT_DIR, path)
@@ -61,8 +61,7 @@ def parse_json_loose(text):
         return json.loads(text)
     except Exception:
         pass
-    start = text.find('{')
-    end = text.rfind('}')
+    start = text.find('{'); end = text.rfind('}')
     if start >= 0 and end > start:
         try:
             return json.loads(text[start:end+1])
@@ -76,10 +75,8 @@ def find_image_payload(x):
         media = x.get('media_files')
         if isinstance(media, list):
             for item in media:
-                if isinstance(item, dict):
-                    p = item.get('path')
-                    if isinstance(p, str) and p:
-                        return {'path': p}
+                if isinstance(item, dict) and isinstance(item.get('path'), str):
+                    return {'path': item['path']}
         for k in ('path', 'image_path', 'output_path', 'file', 'url'):
             v = x.get(k)
             if isinstance(v, str) and v:
@@ -94,9 +91,11 @@ def find_image_payload(x):
         if isinstance(x.get('image_url'), dict):
             u = x['image_url'].get('url')
             if isinstance(u, str) and u:
-                if u.startswith('http'):
-                    return {'url': u}
-                return {'b64': u}
+                return {'url': u} if u.startswith('http') else {'b64': u}
+        # Responses API image_generation_call often uses result field.
+        v = x.get('result')
+        if isinstance(v, str) and (v.startswith('iVBOR') or v.startswith('/9j/') or v.startswith('data:image')):
+            return {'b64': v}
         for v in x.values():
             r = find_image_payload(v)
             if r:
@@ -118,25 +117,22 @@ def find_image_payload(x):
 
 
 def minis_to_path(p):
-    if p.startswith('minis://'):
-        return '/var/minis/' + p[len('minis://'):]
-    return p
+    return '/var/minis/' + p[len('minis://'):] if p.startswith('minis://') else p
 
 
 def save_payload(payload, output):
     if 'path' in payload:
         src = minis_to_path(payload['path'])
-        if src != output:
-            data = open(src, 'rb').read()
-            open(output, 'wb').write(data)
-        return os.path.getsize(output)
+        data = open(src, 'rb').read()
+        open(output, 'wb').write(data)
+        return len(data)
     if 'b64' in payload:
         b64 = payload['b64']
         if b64.startswith('data:image'):
             b64 = b64.split(',', 1)[1]
-        data = base64.b64decode(b64)
-        open(output, 'wb').write(data)
-        return len(data)
+        img = base64.b64decode(b64)
+        open(output, 'wb').write(img)
+        return len(img)
     if 'url' in payload:
         with urllib.request.urlopen(payload['url'], timeout=240) as r:
             data = r.read()
@@ -145,60 +141,52 @@ def save_payload(payload, output):
     raise RuntimeError('未找到图像输出')
 
 
-def run_minis_text_model(prompt):
-    model = os.environ.get('IMAGE2_PROMPT_MODEL') or os.environ.get('OPENAI_PROMPT_MODEL') or 'gpt-5.4'
-    system = ('你是专业图像提示词优化器。把用户的简短需求改写成适合 gpt-image-2 的高质量中文图像生成提示词。'
-              '只输出最终提示词，不要解释，不要 Markdown。保留用户的角色、审美和风格要求；补充主体、场景、构图、镜头、光影、材质、细节、质量要求；避免露骨色情和违法内容。')
-    inp = '/tmp/image2_prompt_input_%d.json' % os.getpid()
-    out = '/tmp/image2_prompt_output_%d.json' % os.getpid()
-    with open(inp, 'w', encoding='utf-8') as f:
-        json.dump({'messages': [
-            {'role': 'system', 'content': system},
-            {'role': 'user', 'content': prompt},
-        ]}, f, ensure_ascii=False)
-    cmd = ['minis-model-use', 'run', '--model', model, '--input', inp, '--output', out, '--compact']
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    text = (r.stdout or '') + ('\n' + r.stderr if r.stderr else '')
-    data = None
-    if os.path.exists(out):
-        try:
-            with open(out, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception:
-            data = None
-    if data is None:
-        data = parse_json_loose(text)
-    if r.returncode != 0:
-        raise RuntimeError((text or 'prompt optimize failed').strip()[:800])
-    # minis-model-use usually returns data.output_text for text models.
-    if isinstance(data, dict):
-        d = data.get('data') if 'data' in data else data
-        for key in ('output_text', 'text', 'content'):
-            v = d.get(key) if isinstance(d, dict) else None
-            if isinstance(v, str) and v.strip():
-                return v.strip().strip('"')
-        # Chat-like fallback.
-        try:
-            choices = d.get('choices') or []
-            if choices:
-                v = choices[0].get('message', {}).get('content')
-                if isinstance(v, str) and v.strip():
-                    return v.strip().strip('"')
-        except Exception:
-            pass
-    raise RuntimeError('prompt optimize returned no text: ' + str(data)[:800])
-
-
-def optimize_prompt(prompt):
-    if os.environ.get('IMAGE2_OPTIMIZE_PROMPT', '1') == '0':
-        return prompt, ''
+def curl_json(url, api_key, payload, timeout=900):
+    fd, payload_path = tempfile.mkstemp(prefix='image2_resp_payload_', suffix='.json'); os.close(fd)
+    fd, out_path = tempfile.mkstemp(prefix='image2_resp_out_', suffix='.json'); os.close(fd)
     try:
-        optimized = run_minis_text_model(prompt)
-        if optimized:
-            return optimized, optimized
-    except Exception as e:
-        print('[image2] prompt optimize skipped: %s' % e, file=sys.stderr)
-    return prompt, ''
+        open(payload_path, 'w', encoding='utf-8').write(json.dumps(payload, ensure_ascii=False))
+        cmd = [
+            'curl', '-sS', '-L', '--max-time', str(timeout), '-o', out_path, '-w', '%{http_code}',
+            '-H', 'Authorization: Bearer ' + api_key,
+            '-H', 'Content-Type: application/json',
+            '-H', 'Accept: application/json',
+            '--data', '@' + payload_path,
+            url,
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout+30)
+        status_text = (r.stdout or '').strip()[-3:]
+        status = int(status_text) if status_text.isdigit() else 0
+        raw = open(out_path, 'rb').read().decode('utf-8', errors='replace')
+        return status, raw, r.stderr
+    finally:
+        for p in (payload_path, out_path):
+            try: os.remove(p)
+            except Exception: pass
+
+
+def responses_generate(prompt, output):
+    api_key = os.environ.get('OPENAI_API_KEY') or os.environ.get('INPUT_API_KEY')
+    if not api_key:
+        raise RuntimeError('OPENAI_API_KEY/INPUT_API_KEY not set')
+    base = (os.environ.get('IMAGE2_RESPONSES_BASE_URL') or os.environ.get('OPENAI_BASE_URL') or 'https://ai.input.im/v1').rstrip('/')
+    model = os.environ.get('IMAGE2_RESPONSES_MODEL') or 'gpt-5.5'
+    payload = {
+        'model': model,
+        'input': [{'role': 'user', 'content': [{'type': 'input_text', 'text': '使用 image_generation 工具生成图片：' + prompt}]}],
+        'tools': [{'type': 'image_generation'}],
+        'tool_choice': 'auto',
+        'stream': False,
+    }
+    status, raw, stderr = curl_json(base + '/responses', api_key, payload, timeout=900)
+    if status < 200 or status >= 300:
+        raise RuntimeError(f'responses HTTP {status}: {(raw or stderr)[:1200]}')
+    data = json.loads(raw)
+    payload = find_image_payload(data)
+    if not payload:
+        raise RuntimeError('responses 未返回可识别图片: ' + json.dumps(data, ensure_ascii=False)[:1200])
+    size = save_payload(payload, output)
+    return {'backend': 'responses', 'model': model, 'endpoint': '/v1/responses', 'size': size}
 
 
 def minis_generate(prompt, output):
@@ -214,8 +202,7 @@ def minis_generate(prompt, output):
     data = None
     if os.path.exists(out):
         try:
-            with open(out, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            data = json.load(open(out, encoding='utf-8'))
         except Exception:
             data = None
     if data is None:
@@ -227,6 +214,15 @@ def minis_generate(prompt, output):
         raise RuntimeError('minis-model-use 未返回可识别的图片数据: ' + str(data)[:1200])
     size = save_payload(payload, output)
     return {'backend': 'minis-model-use', 'model': model, 'endpoint': endpoint, 'size': size}
+
+
+def generate(prompt, output):
+    if os.environ.get('IMAGE2_USE_RESPONSES', '1') != '0':
+        try:
+            return responses_generate(prompt, output)
+        except Exception as e:
+            print('[image2] responses failed, fallback to minis-model-use: %s' % e, file=sys.stderr)
+    return minis_generate(prompt, output)
 
 
 def edit_image(image, prompt, output):
@@ -251,10 +247,7 @@ def main():
             usage(1)
         prompt = sys.argv[2]
         output = normalize_out(sys.argv[3] if len(sys.argv) >= 4 else None, 'image2')
-        prompt, optimized = optimize_prompt(prompt)
-        res = minis_generate(prompt, output)
-        if optimized:
-            res['optimized_prompt'] = optimized
+        res = generate(prompt, output)
         res.update({'success': True, 'path': output})
         print(json.dumps(res, ensure_ascii=False, indent=2))
         return
@@ -267,10 +260,7 @@ def main():
         raise SystemExit(edit_image(image, prompt, output))
     prompt = ' '.join(sys.argv[1:])
     output = normalize_out(None, 'image2')
-    prompt, optimized = optimize_prompt(prompt)
-    res = minis_generate(prompt, output)
-    if optimized:
-        res['optimized_prompt'] = optimized
+    res = generate(prompt, output)
     res.update({'success': True, 'path': output})
     print(json.dumps(res, ensure_ascii=False, indent=2))
 
