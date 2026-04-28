@@ -25,10 +25,12 @@ def usage(code=0):
   image2 改 输入图 "修改要求" [输出文件]
 
 默认:
-  image2 画 直接走 Minis App 自带 minis-model-use：
+  image2 画 先用 AI 优化提示词，再走 Minis App 自带 minis-model-use：
   minis-model-use run --model gpt-image-2 --endpoint images-gen
 
 可选环境变量:
+  IMAGE2_OPTIMIZE_PROMPT=1          默认 1；设 0 可跳过提示词优化
+  IMAGE2_PROMPT_MODEL=gpt-5.5       默认 gpt-5.5
   IMAGE2_MINIS_MODEL=gpt-image-2      默认 gpt-image-2
   IMAGE2_MINIS_ENDPOINT=images-gen    默认 images-gen；需要自动切换时可设 auto
 ''')
@@ -143,6 +145,62 @@ def save_payload(payload, output):
     raise RuntimeError('未找到图像输出')
 
 
+def run_minis_text_model(prompt):
+    model = os.environ.get('IMAGE2_PROMPT_MODEL') or os.environ.get('OPENAI_PROMPT_MODEL') or 'gpt-5.5'
+    system = ('你是专业图像提示词优化器。把用户的简短需求改写成适合 gpt-image-2 的高质量中文图像生成提示词。'
+              '只输出最终提示词，不要解释，不要 Markdown。保留用户的角色、审美和风格要求；补充主体、场景、构图、镜头、光影、材质、细节、质量要求；避免露骨色情和违法内容。')
+    inp = '/tmp/image2_prompt_input_%d.json' % os.getpid()
+    out = '/tmp/image2_prompt_output_%d.json' % os.getpid()
+    with open(inp, 'w', encoding='utf-8') as f:
+        json.dump({'messages': [
+            {'role': 'system', 'content': system},
+            {'role': 'user', 'content': prompt},
+        ]}, f, ensure_ascii=False)
+    cmd = ['minis-model-use', 'run', '--model', model, '--input', inp, '--output', out, '--compact']
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    text = (r.stdout or '') + ('\n' + r.stderr if r.stderr else '')
+    data = None
+    if os.path.exists(out):
+        try:
+            with open(out, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            data = None
+    if data is None:
+        data = parse_json_loose(text)
+    if r.returncode != 0:
+        raise RuntimeError((text or 'prompt optimize failed').strip()[:800])
+    # minis-model-use usually returns data.output_text for text models.
+    if isinstance(data, dict):
+        d = data.get('data') if 'data' in data else data
+        for key in ('output_text', 'text', 'content'):
+            v = d.get(key) if isinstance(d, dict) else None
+            if isinstance(v, str) and v.strip():
+                return v.strip().strip('"')
+        # Chat-like fallback.
+        try:
+            choices = d.get('choices') or []
+            if choices:
+                v = choices[0].get('message', {}).get('content')
+                if isinstance(v, str) and v.strip():
+                    return v.strip().strip('"')
+        except Exception:
+            pass
+    raise RuntimeError('prompt optimize returned no text: ' + str(data)[:800])
+
+
+def optimize_prompt(prompt):
+    if os.environ.get('IMAGE2_OPTIMIZE_PROMPT', '1') == '0':
+        return prompt, ''
+    try:
+        optimized = run_minis_text_model(prompt)
+        if optimized:
+            return optimized, optimized
+    except Exception as e:
+        print('[image2] prompt optimize skipped: %s' % e, file=sys.stderr)
+    return prompt, ''
+
+
 def minis_generate(prompt, output):
     model = os.environ.get('IMAGE2_MINIS_MODEL') or 'gpt-image-2'
     endpoint = os.environ.get('IMAGE2_MINIS_ENDPOINT') or 'images-gen'
@@ -193,7 +251,10 @@ def main():
             usage(1)
         prompt = sys.argv[2]
         output = normalize_out(sys.argv[3] if len(sys.argv) >= 4 else None, 'image2')
+        prompt, optimized = optimize_prompt(prompt)
         res = minis_generate(prompt, output)
+        if optimized:
+            res['optimized_prompt'] = optimized
         res.update({'success': True, 'path': output})
         print(json.dumps(res, ensure_ascii=False, indent=2))
         return
@@ -206,7 +267,10 @@ def main():
         raise SystemExit(edit_image(image, prompt, output))
     prompt = ' '.join(sys.argv[1:])
     output = normalize_out(None, 'image2')
+    prompt, optimized = optimize_prompt(prompt)
     res = minis_generate(prompt, output)
+    if optimized:
+        res['optimized_prompt'] = optimized
     res.update({'success': True, 'path': output})
     print(json.dumps(res, ensure_ascii=False, indent=2))
 

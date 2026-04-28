@@ -1,18 +1,18 @@
 ---
 name: codex-image
-version: 1.0.4
+version: 1.0.5
 local: true
 source: https://github.com/cc166/MinisSkills/tree/main/codex-image
 source_url: https://github.com/cc166/MinisSkills/tree/main/codex-image
 repository: https://github.com/cc166/MinisSkills
 homepage: https://github.com/cc166/MinisSkills/tree/main/codex-image
 upstream_policy: overwrite-from-user-repo-only
-description: 使用 gpt-image-2 生成图片的本地技能。用户说“image2画”“image2 画”“用 image2 画”“gpt-image-2 画图”“生成图片”“画图”时触发。默认直接执行 `image2 画 "提示词"`，该命令使用 Minis App 原生 `minis-model-use run --model gpt-image-2 --endpoint images-gen`。
+description: 使用 gpt-image-2 生成图片的本地技能。用户说“image2画”“image2 画”“用 image2 画”“gpt-image-2 画图”“生成图片”“画图”时触发。默认执行 `image2 画 "提示词"`：先用 AI 优化提示词，再用 Minis App 原生 `minis-model-use run --model gpt-image-2 --endpoint images-gen` 出图。
 ---
 
 # codex-image
 
-使用 `gpt-image-2` 生成图片。这个本地版保持原 `codex-image` 的极简思路：**理解用户提示词 → 调用 image generation → 返回图片**。
+使用 `gpt-image-2` 生成图片。保持原 `codex-image` 的思路：**AI 理解/优化提示词 → 调用 image generation → 返回图片**。
 
 本地快速触发词：`image2画`
 
@@ -22,11 +22,21 @@ description: 使用 gpt-image-2 生成图片的本地技能。用户说“image2
 image2 画 "提示词" [输出.png]
 ```
 
-等价于调用 Minis 原生模型：
+默认流程：
 
-```bash
-minis-model-use run --model gpt-image-2 --endpoint images-gen
-```
+1. 用 `gpt-5.5` 优化用户提示词。
+2. 调用 Minis 原生：
+   ```bash
+   minis-model-use run --model gpt-image-2 --endpoint images-gen
+   ```
+3. 直接返回生成图片。
+
+## 可选环境变量
+
+- `IMAGE2_OPTIMIZE_PROMPT=0`：跳过提示词优化
+- `IMAGE2_PROMPT_MODEL=gpt-5.5`：提示词优化模型
+- `IMAGE2_MINIS_MODEL=gpt-image-2`：出图模型
+- `IMAGE2_MINIS_ENDPOINT=images-gen`：出图端点；可设为 `auto`
 
 ## 工作流
 
@@ -35,17 +45,5 @@ minis-model-use run --model gpt-image-2 --endpoint images-gen
    ```bash
    image2 画 "提示词" /var/minis/attachments/out.png
    ```
-3. 只用 `ls -l` / `file` 确认图片文件存在，不调用 `read_image` 做视觉查看，除非用户要求检查效果或排错。
-4. 直接用 Markdown 图片返回：
-   ```markdown
-   ![图片](minis://attachments/out.png)
-   ```
-
-## 备注
-
-- 默认端点：`images-gen`，更接近原技能的直接 image generation 链路。
-- 如需 App 自动选择端点，可临时使用：
-  ```bash
-  IMAGE2_MINIS_ENDPOINT=auto image2 画 "提示词"
-  ```
-- 相对输出文件名默认保存到 `/var/minis/attachments/`。
+3. 只确认文件存在，不默认视觉检查。
+4. 直接用 Markdown 图片返回。

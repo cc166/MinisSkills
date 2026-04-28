@@ -10,8 +10,10 @@ image2 画 "提示词" [输出.png]
 
 快速触发词：`image2画`
 
-默认走 Minis 原生：
+默认流程：
 
-```bash
-minis-model-use run --model gpt-image-2 --endpoint images-gen
+```text
+gpt-5.5 优化提示词 → minis-model-use run --model gpt-image-2 --endpoint images-gen
 ```
+
+可用 `IMAGE2_OPTIMIZE_PROMPT=0` 跳过提示词优化。
