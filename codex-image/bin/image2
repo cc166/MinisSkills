@@ -30,7 +30,7 @@ def usage(code=0):
 
 可选环境变量:
   IMAGE2_OPTIMIZE_PROMPT=1          默认 1；设 0 可跳过提示词优化
-  IMAGE2_PROMPT_MODEL=gpt-5.5       默认 gpt-5.5
+  IMAGE2_PROMPT_MODEL=gpt-5.4       默认 gpt-5.4
   IMAGE2_MINIS_MODEL=gpt-image-2      默认 gpt-image-2
   IMAGE2_MINIS_ENDPOINT=images-gen    默认 images-gen；需要自动切换时可设 auto
 ''')
@@ -146,7 +146,7 @@ def save_payload(payload, output):
 
 
 def run_minis_text_model(prompt):
-    model = os.environ.get('IMAGE2_PROMPT_MODEL') or os.environ.get('OPENAI_PROMPT_MODEL') or 'gpt-5.5'
+    model = os.environ.get('IMAGE2_PROMPT_MODEL') or os.environ.get('OPENAI_PROMPT_MODEL') or 'gpt-5.4'
     system = ('你是专业图像提示词优化器。把用户的简短需求改写成适合 gpt-image-2 的高质量中文图像生成提示词。'
               '只输出最终提示词，不要解释，不要 Markdown。保留用户的角色、审美和风格要求；补充主体、场景、构图、镜头、光影、材质、细节、质量要求；避免露骨色情和违法内容。')
     inp = '/tmp/image2_prompt_input_%d.json' % os.getpid()

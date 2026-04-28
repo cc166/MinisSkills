@@ -24,7 +24,7 @@ image2 画 "提示词" [输出.png]
 
 默认流程：
 
-1. 用 `gpt-5.5` 优化用户提示词。
+1. 用 `gpt-5.4` 优化用户提示词。
 2. 调用 Minis 原生：
    ```bash
    minis-model-use run --model gpt-image-2 --endpoint images-gen
@@ -34,7 +34,7 @@ image2 画 "提示词" [输出.png]
 ## 可选环境变量
 
 - `IMAGE2_OPTIMIZE_PROMPT=0`：跳过提示词优化
-- `IMAGE2_PROMPT_MODEL=gpt-5.5`：提示词优化模型
+- `IMAGE2_PROMPT_MODEL=gpt-5.4`：提示词优化模型
 - `IMAGE2_MINIS_MODEL=gpt-image-2`：出图模型
 - `IMAGE2_MINIS_ENDPOINT=images-gen`：出图端点；可设为 `auto`
 
