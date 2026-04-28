@@ -1,18 +1,18 @@
 ---
 name: codex-image
-version: 1.0.7
+version: 1.0.8
 local: true
 source: https://github.com/cc166/MinisSkills/tree/main/codex-image
 source_url: https://github.com/cc166/MinisSkills/tree/main/codex-image
 repository: https://github.com/cc166/MinisSkills
 homepage: https://github.com/cc166/MinisSkills/tree/main/codex-image
 upstream_policy: overwrite-from-user-repo-only
-description: 使用 gpt-image-2 / image_generation 工具生成图片的本地技能。用户说“image2画”“image2 画”“用 image2 画”“gpt-image-2 画图”“生成图片”“画图”时触发。默认执行 `image2 画 "提示词"`：使用 OpenAI-compatible `/v1/responses`，模型 `gpt-5.5`，工具 `image_generation`；失败时回退 Minis App 原生 `minis-model-use`。
+description: 使用 `/v1/responses` 生成图片的本地技能。用户说“image2画”“image2 画”“用 image2 画”“生成图片”“画图”时触发。默认执行 `image2 画 "提示词"`：先用 `gpt-5.4` 优化提示词，再用 `gpt-5.5` + `image_generation` 工具出图；失败时回退 Minis App 原生 `minis-model-use`。
 ---
 
 # codex-image
 
-使用 OpenAI-compatible `/v1/responses` + `image_generation` 工具生成图片。
+使用 OpenAI-compatible `/v1/responses` 生成图片。
 
 本地快速触发词：`image2画`
 
@@ -25,7 +25,8 @@ image2 画 "提示词" [输出.png]
 默认流程：
 
 ```text
-gpt-5.5 /v1/responses + tools=[{"type":"image_generation"}]
+gpt-5.4 /v1/responses 优化提示词
+→ gpt-5.5 /v1/responses + tools=[{"type":"image_generation"}] 出图
 ```
 
 失败时回退：
@@ -36,6 +37,8 @@ minis-model-use run --model gpt-image-2 --endpoint auto
 
 ## 可选环境变量
 
+- `IMAGE2_OPTIMIZE_PROMPT=1`：默认开启；设为 `0` 跳过提示词优化
+- `IMAGE2_PROMPT_MODEL=gpt-5.4`：提示词优化模型
 - `IMAGE2_RESPONSES_MODEL=gpt-5.5`：responses 出图模型
 - `IMAGE2_RESPONSES_BASE_URL=https://ai.input.im/v1`：responses base URL；未设置时优先 `OPENAI_BASE_URL`，否则用 `https://ai.input.im/v1`
 - `IMAGE2_USE_RESPONSES=0`：禁用 responses，直接走 Minis fallback
