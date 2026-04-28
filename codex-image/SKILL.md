@@ -35,8 +35,8 @@ minis-model-use run --model gpt-image-2 --endpoint images-gen
    ```bash
    image2 画 "提示词" /var/minis/attachments/out.png
    ```
-3. 确认图片文件存在。
-4. 用 Markdown 图片返回：
+3. 只用 `ls -l` / `file` 确认图片文件存在，不调用 `read_image` 做视觉查看，除非用户要求检查效果或排错。
+4. 直接用 Markdown 图片返回：
    ```markdown
    ![图片](minis://attachments/out.png)
    ```
