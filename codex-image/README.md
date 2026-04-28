@@ -1,33 +1,17 @@
 # codex-image
 
-Minis 本地图片技能，默认直接走 Minis 原生 `minis-model-use` 的 image generation 端点。
-
-来源：<https://github.com/cc166/MinisSkills/tree/main/codex-image>
-
-## 安装
-
-```bash
-git clone https://github.com/cc166/MinisSkills.git /tmp/MinisSkills
-sh /tmp/MinisSkills/codex-image/scripts/install.sh
-```
+本地 `gpt-image-2` 图片生成技能。
 
 ## 用法
 
 ```bash
 image2 画 "提示词" [输出.png]
-image2 改 输入图.png "修改要求" [输出.png]
 ```
 
-`image2 画` 等价于：
+快速触发词：`image2画`
+
+默认走 Minis 原生：
 
 ```bash
 minis-model-use run --model gpt-image-2 --endpoint images-gen
 ```
-
-需要自动端点切换时：
-
-```bash
-IMAGE2_MINIS_ENDPOINT=auto image2 画 "提示词"
-```
-
-可选环境变量：`IMAGE2_MINIS_MODEL`、`IMAGE2_MINIS_ENDPOINT`。
